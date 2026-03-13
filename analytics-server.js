@@ -355,8 +355,225 @@ app.get('/api/analytics/export', (req, res) => {
   res.send([headers.join(','), ...rows].join('\n'));
 });
 
+// ── LP (LANDING PAGE) DATA STORAGE ──
+const LP_SESSIONS_FILE = path.join(__dirname, 'data', 'lp-sessions.json');
+const LP_EVENTS_FILE   = path.join(__dirname, 'data', 'lp-events.jsonl');
+if (!fs.existsSync(LP_SESSIONS_FILE)) fs.writeFileSync(LP_SESSIONS_FILE, '{}');
+if (!fs.existsSync(LP_EVENTS_FILE))   fs.writeFileSync(LP_EVENTS_FILE, '');
+let lpSessions = JSON.parse(fs.readFileSync(LP_SESSIONS_FILE, 'utf8'));
+function saveLPSessions() { fs.writeFileSync(LP_SESSIONS_FILE, JSON.stringify(lpSessions, null, 0)); }
+function appendLPEvent(ev) { fs.appendFileSync(LP_EVENTS_FILE, JSON.stringify(ev) + '\n'); }
+function readLPEvents() {
+  const raw = fs.readFileSync(LP_EVENTS_FILE, 'utf8').trim();
+  if (!raw) return [];
+  return raw.split('\n').map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+}
+
+// ── LP TRACK ──
+app.post('/api/lp/track', (req, res) => {
+  try {
+    const { eventType, source, sessionId, name, phone, email, score, qualified, answers, utms, fbclid, fbc, fbp, stepIndex } = req.body;
+    if (!eventType || !source) return res.status(400).json({ error: 'Missing required fields' });
+    const ts = new Date().toISOString();
+    const sid = sessionId || (source + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8));
+
+    if (eventType === 'lead_submit') {
+      const prev = lpSessions[sid] || {};
+      lpSessions[sid] = {
+        id: sid, source, started_at: prev.started_at || ts,
+        name: name || null, phone: phone || null, email: email || null,
+        score: score !== undefined ? score : null,
+        qualified: qualified || 'NO',
+        answers: answers || {},
+        utm_source: utms?.utm_source || '', utm_medium: utms?.utm_medium || '',
+        utm_campaign: utms?.utm_campaign || '', utm_content: utms?.utm_content || '',
+        utm_term: utms?.utm_term || '',
+        fbclid: fbclid || '', fbc: fbc || '', fbp: fbp || '',
+        furthest_step: prev.furthest_step || stepIndex || null,
+        referrer: req.headers['referer'] || '', user_agent: req.headers['user-agent'] || ''
+      };
+      saveLPSessions();
+      appendLPEvent({ sessionId: sid, source, eventType, ts });
+    } else if (eventType === 'step_view') {
+      if (!lpSessions[sid]) {
+        lpSessions[sid] = {
+          id: sid, source, started_at: ts, name: null, phone: null, email: null,
+          score: null, qualified: null, answers: {},
+          utm_source: '', utm_medium: '', utm_campaign: '', utm_content: '', utm_term: '',
+          fbclid: '', fbc: '', fbp: '', furthest_step: stepIndex || 1,
+          referrer: req.headers['referer'] || '', user_agent: req.headers['user-agent'] || ''
+        };
+      } else if ((stepIndex || 1) > (lpSessions[sid].furthest_step || 0)) {
+        lpSessions[sid].furthest_step = stepIndex;
+      }
+      saveLPSessions();
+      appendLPEvent({ sessionId: sid, source, eventType, stepIndex: stepIndex || 1, ts });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('LP Track error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── LP OVERVIEW ──
+app.get('/api/lp/overview', (req, res) => {
+  const { from, to, source } = req.query;
+  let all = filterByDate(Object.values(lpSessions), from, to);
+  if (source) all = all.filter(s => s.source === source);
+  const submitted = all.filter(s => s.qualified !== null && s.qualified !== undefined);
+  const total = submitted.length;
+  const qual = submitted.filter(s => s.qualified === 'YES').length;
+  const not_qual = submitted.filter(s => s.qualified === 'NO').length;
+  const disqual = submitted.filter(s => s.qualified === 'DISQUALIFIED').length;
+  const scores = submitted.filter(s => s.score !== null && s.score !== undefined).map(s => parseFloat(s.score));
+  const avgScore = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : '0';
+  const maxScore = scores.length ? Math.max(...scores) : 0;
+  const minScore = scores.length ? Math.min(...scores) : 0;
+
+  const scoreBuckets = [];
+  if (scores.length && maxScore > minScore) {
+    const bsz = (maxScore - minScore) / 5;
+    for (let i = 0; i < 5; i++) {
+      const lo = minScore + i * bsz, hi = minScore + (i + 1) * bsz;
+      scoreBuckets.push({ range: `${lo.toFixed(0)}–${hi.toFixed(0)}`, count: scores.filter(s => i < 4 ? (s >= lo && s < hi) : (s >= lo && s <= hi)).length });
+    }
+  } else if (scores.length) {
+    scoreBuckets.push({ range: `${minScore.toFixed(0)}`, count: scores.length });
+  }
+
+  const byDay = {};
+  submitted.forEach(s => {
+    const day = (s.started_at || '').slice(0, 10);
+    if (!day) return;
+    if (!byDay[day]) byDay[day] = { day, submissions: 0, qualified: 0 };
+    byDay[day].submissions++;
+    if (s.qualified === 'YES') byDay[day].qualified++;
+  });
+  const trend = Object.values(byDay).sort((a, b) => a.day.localeCompare(b.day)).slice(-30);
+
+  const utmMap = {};
+  submitted.forEach(s => { const src = s.utm_source || 'direct'; utmMap[src] = (utmMap[src] || 0) + 1; });
+  const utm_breakdown = Object.entries(utmMap).map(([src, count]) => ({ source: src, count })).sort((a, b) => b.count - a.count).slice(0, 10);
+
+  res.json({
+    total, qualified: qual, not_qualified: not_qual, disqualified: disqual,
+    qual_rate: total ? ((qual / total) * 100).toFixed(1) : '0',
+    avg_score: avgScore, max_score: maxScore,
+    score_buckets: scoreBuckets, trend, utm_breakdown
+  });
+});
+
+// ── LP FUNNEL ──
+app.get('/api/lp/funnel', (req, res) => {
+  const { from, to, source } = req.query;
+  let allSess = filterByDate(Object.values(lpSessions), from, to);
+  if (source) allSess = allSess.filter(s => s.source === source);
+  const sessIds = new Set(allSess.map(s => s.id));
+  const events = filterByDate(readLPEvents(), from, to, 'ts').filter(e => sessIds.has(e.sessionId) && e.eventType === 'step_view');
+
+  const stepCounts = {};
+  const seen = new Set();
+  events.forEach(e => {
+    const key = e.sessionId + '::' + e.stepIndex;
+    if (!seen.has(key)) { seen.add(key); stepCounts[e.stepIndex] = (stepCounts[e.stepIndex] || 0) + 1; }
+  });
+
+  const submitted = allSess.filter(s => s.qualified !== null && s.qualified !== undefined).length;
+  const STEP_NAMES = {
+    delhi:     ['Q1: Course Interest', 'Q2: Investment', 'Q3: Commitment', 'Q4: Timeline', 'Q5: Financial', 'Contact Info'],
+    hyderabad: ['Q1: Course Interest', 'Q2: Investment', 'Q3: Commitment', 'Q4: Timeline', 'Q5: Financial', 'Contact Info'],
+    online:    ['Q1: Experience', 'Q2: Goal', 'Q3: Investment', 'Q4: Timeline', 'Contact Info']
+  };
+  const names = STEP_NAMES[source] || ['Step 1','Step 2','Step 3','Step 4','Step 5','Step 6'];
+  const funnelSteps = names.map((name, i) => ({ name, step: i + 1, count: stepCounts[i + 1] || 0 }));
+  funnelSteps.push({ name: 'Form Submitted', step: names.length + 1, count: submitted });
+
+  res.json({ funnelSteps, total: allSess.length });
+});
+
+// ── LP ANSWERS ──
+app.get('/api/lp/answers', (req, res) => {
+  const { from, to, source } = req.query;
+  let all = filterByDate(Object.values(lpSessions), from, to);
+  if (source) all = all.filter(s => s.source === source && s.qualified !== null && s.qualified !== undefined);
+
+  const grouped = {};
+  all.forEach(s => {
+    if (!s.answers) return;
+    Object.entries(s.answers).forEach(([qId, ans]) => {
+      if (!ans || !ans.value) return;
+      if (!grouped[qId]) grouped[qId] = {};
+      if (!grouped[qId][ans.value]) grouped[qId][ans.value] = { value: ans.value, label: ans.label || ans.value, count: 0 };
+      grouped[qId][ans.value].count++;
+    });
+  });
+
+  const questions = Object.entries(grouped).map(([qId, answers]) => ({
+    questionId: qId,
+    questionIndex: parseInt(qId.replace('q', '')) - 1,
+    answers: Object.values(answers).sort((a, b) => b.count - a.count)
+  })).sort((a, b) => a.questionIndex - b.questionIndex);
+
+  res.json({ questions });
+});
+
+// ── LP LEADS ──
+app.get('/api/lp/leads', (req, res) => {
+  const { from, to, source, search, qualified, sort = 'started_at', order = 'desc', page = 1, limit = 50 } = req.query;
+  let list = filterByDate(Object.values(lpSessions), from, to);
+  if (source) list = list.filter(s => s.source === source && s.qualified !== null && s.qualified !== undefined);
+  if (search) {
+    const q = search.toLowerCase();
+    list = list.filter(s => (s.name||'').toLowerCase().includes(q) || (s.phone||'').includes(q) || (s.email||'').toLowerCase().includes(q));
+  }
+  if (qualified && qualified !== '') list = list.filter(s => s.qualified === qualified);
+
+  const validSorts = ['started_at', 'name', 'score', 'qualified'];
+  const sc = validSorts.includes(sort) ? sort : 'started_at';
+  list.sort((a, b) => {
+    const va = a[sc] || 0, vb = b[sc] || 0;
+    if (order === 'asc') return va > vb ? 1 : va < vb ? -1 : 0;
+    return va < vb ? 1 : va > vb ? -1 : 0;
+  });
+
+  const total = list.length;
+  const paged = list.slice((parseInt(page) - 1) * parseInt(limit), parseInt(page) * parseInt(limit));
+  res.json({ total, page: parseInt(page), limit: parseInt(limit), leads: paged });
+});
+
+// ── LP EXPORT ──
+app.get('/api/lp/export', (req, res) => {
+  const { source } = req.query;
+  let list = Object.values(lpSessions).filter(s => s.qualified !== null && s.qualified !== undefined);
+  if (source) list = list.filter(s => s.source === source);
+
+  const headers = ['Session ID','Date','Source','Name','Phone','Email','Score','Qualified',
+    'Q1 Value','Q1 Label','Q2 Value','Q2 Label','Q3 Value','Q3 Label',
+    'Q4 Value','Q4 Label','Q5 Value','Q5 Label',
+    'UTM Source','UTM Medium','UTM Campaign','UTM Content','UTM Term'];
+  const rows = list.map(s => {
+    const a = s.answers || {};
+    return [
+      s.id, s.started_at?.slice(0,10), s.source,
+      s.name||'', s.phone||'', s.email||'',
+      s.score !== null ? s.score : '', s.qualified||'',
+      a.q1?.value||'', a.q1?.label||'', a.q2?.value||'', a.q2?.label||'',
+      a.q3?.value||'', a.q3?.label||'', a.q4?.value||'', a.q4?.label||'',
+      a.q5?.value||'', a.q5?.label||'',
+      s.utm_source||'', s.utm_medium||'', s.utm_campaign||'', s.utm_content||'', s.utm_term||''
+    ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',');
+  });
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="tn-lp${source ? '-'+source : ''}.csv"`);
+  res.send([headers.join(','), ...rows].join('\n'));
+});
+
 app.listen(PORT, () => {
   console.log(`✅ TN Analytics running at http://localhost:${PORT}`);
-  console.log(`📊 Dashboard: http://localhost:${PORT}/analytics-dashboard.html`);
+  console.log(`📊 Quiz Funnel:  http://localhost:${PORT}/analytics-dashboard.html`);
+  console.log(`📊 Delhi LP:     http://localhost:${PORT}/delhi-dashboard.html`);
+  console.log(`📊 Hyderabad LP: http://localhost:${PORT}/hyderabad-dashboard.html`);
+  console.log(`📊 Online LP:    http://localhost:${PORT}/online-dashboard.html`);
   console.log(`💾 Data stored in: ${path.join(__dirname, 'data')}`);
 });
