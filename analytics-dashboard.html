@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TN Quiz Analytics</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root {
+      --primary: #6D2E46;
+      --primary-dark: #4e1f31;
+      --secondary: #A26769;
+      --accent: #ECE2D0;
+      --bg: #FAF7F2;
+      --white: #ffffff;
+      --text: #1a1a1a;
+      --text-muted: #666;
+      --border: #e8e0d5;
+      --success: #2d8a4e;
+      --warn: #d97706;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* ── HEADER ── */
+    .app-header {
+      background: var(--primary);
+      color: white;
+      padding: 16px 28px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .app-header h1 {
+      font-family: 'Playfair Display', serif;
+      font-size: 20px; font-weight: 700;
+    }
+    .app-header .sub { font-size: 12px; opacity: 0.75; margin-top: 2px; }
+    .header-right { display: flex; gap: 10px; align-items: center; }
+    .export-btn {
+      background: rgba(255,255,255,0.15);
+      color: white; border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 8px; padding: 8px 14px;
+      font-family: 'Inter', sans-serif;
+      font-size: 13px; font-weight: 600;
+      cursor: pointer; text-decoration: none;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .export-btn:hover { background: rgba(255,255,255,0.25); }
+
+    /* ── FILTERS BAR ── */
+    .filters-bar {
+      background: var(--white);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 28px;
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    }
+    .filter-label { font-size: 12px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+    .filter-input, .filter-select {
+      padding: 7px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: 'Inter', sans-serif;
+      font-size: 13px; color: var(--text);
+      background: var(--white);
+      outline: none;
+    }
+    .filter-input:focus, .filter-select:focus { border-color: var(--primary); }
+    .filter-input[type="date"] { width: 140px; }
+    .apply-btn {
+      background: var(--primary); color: white;
+      border: none; border-radius: 8px;
+      padding: 7px 16px; font-family: 'Inter', sans-serif;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+    }
+    .apply-btn:hover { background: var(--primary-dark); }
+    .reset-btn {
+      background: transparent; color: var(--text-muted);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 7px 12px; font-family: 'Inter', sans-serif;
+      font-size: 13px; cursor: pointer;
+    }
+    .reset-btn:hover { border-color: var(--secondary); color: var(--text); }
+
+    /* ── TABS ── */
+    .tabs {
+      background: var(--white);
+      border-bottom: 1px solid var(--border);
+      padding: 0 28px;
+      display: flex; gap: 0;
+    }
+    .tab-btn {
+      padding: 14px 20px;
+      background: none; border: none;
+      font-family: 'Inter', sans-serif;
+      font-size: 14px; font-weight: 500;
+      color: var(--text-muted); cursor: pointer;
+      border-bottom: 3px solid transparent;
+      transition: all 0.2s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+
+    /* ── CONTENT ── */
+    .content { padding: 28px; max-width: 1200px; margin: 0 auto; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── STAT CARDS ── */
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 28px; }
+    .stat-card {
+      background: var(--white); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px 16px;
+    }
+    .stat-card .label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 8px; }
+    .stat-card .value { font-size: 32px; font-weight: 700; font-family: 'Playfair Display', serif; color: var(--primary); line-height: 1; }
+    .stat-card .sub-value { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+    .stat-card.highlight { background: var(--primary); border-color: var(--primary); }
+    .stat-card.highlight .label, .stat-card.highlight .sub-value { color: rgba(255,255,255,0.7); }
+    .stat-card.highlight .value { color: white; }
+
+    /* ── CHARTS ── */
+    .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 28px; }
+    .chart-card {
+      background: var(--white); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px;
+    }
+    .chart-card.full { grid-column: 1 / -1; }
+    .chart-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 15px; font-weight: 700;
+      margin-bottom: 16px; color: var(--text);
+    }
+    .chart-wrap { position: relative; height: 220px; }
+    .chart-wrap.tall { height: 320px; }
+
+    /* ── FUNNEL TABLE ── */
+    .funnel-table { width: 100%; border-collapse: collapse; }
+    .funnel-table th {
+      text-align: left; font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      color: var(--text-muted); padding: 8px 12px;
+      border-bottom: 2px solid var(--border);
+    }
+    .funnel-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
+    .funnel-table tr:last-child td { border-bottom: none; }
+    .funnel-table tr:hover td { background: #fdf9f5; }
+    .funnel-bar-cell { width: 200px; }
+    .funnel-bar-wrap { background: var(--accent); border-radius: 4px; height: 8px; overflow: hidden; }
+    .funnel-bar-fill { background: var(--primary); height: 100%; border-radius: 4px; transition: width 0.6s ease; }
+    .drop-badge {
+      display: inline-flex; align-items: center;
+      padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 700;
+    }
+    .drop-badge.good { background: #dcfce7; color: #15803d; }
+    .drop-badge.warn { background: #fef3c7; color: #92400e; }
+    .drop-badge.bad { background: #fee2e2; color: #b91c1c; }
+
+    /* ── ANSWER CHARTS ── */
+    .q-picker-row { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+    .q-picker-label { font-size: 14px; font-weight: 600; }
+    .answer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+    .answer-card { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
+    .answer-card .q-text { font-size: 13px; font-weight: 600; margin-bottom: 14px; line-height: 1.4; }
+    .answer-row { margin-bottom: 10px; }
+    .answer-row .text { font-size: 13px; color: var(--text-muted); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .answer-row .bar-wrap { background: var(--accent); border-radius: 4px; height: 6px; margin-bottom: 2px; }
+    .answer-row .bar-fill { background: var(--primary); height: 100%; border-radius: 4px; }
+    .answer-row .count { font-size: 11px; color: var(--text-muted); }
+
+    /* ── SIGNAL TABLE ── */
+    .section-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 17px; font-weight: 700;
+      margin: 28px 0 14px;
+    }
+    .signal-table { width: 100%; border-collapse: collapse; background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+    .signal-table th { text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); padding: 10px 14px; background: var(--bg); }
+    .signal-table td { padding: 12px 14px; border-top: 1px solid var(--border); font-size: 14px; }
+
+    /* ── LEADS TABLE ── */
+    .leads-toolbar {
+      display: flex; gap: 10px; align-items: center;
+      margin-bottom: 16px; flex-wrap: wrap;
+    }
+    .leads-search {
+      flex: 1; min-width: 200px;
+      padding: 9px 14px;
+      border: 1px solid var(--border); border-radius: 8px;
+      font-family: 'Inter', sans-serif; font-size: 14px;
+      outline: none;
+    }
+    .leads-search:focus { border-color: var(--primary); }
+    .leads-filter-select {
+      padding: 9px 12px;
+      border: 1px solid var(--border); border-radius: 8px;
+      font-family: 'Inter', sans-serif; font-size: 13px;
+      color: var(--text); background: var(--white); outline: none;
+    }
+    .leads-filter-select:focus { border-color: var(--primary); }
+
+    .leads-table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+    .leads-table { width: 100%; border-collapse: collapse; background: var(--white); min-width: 900px; }
+    .leads-table th {
+      text-align: left; font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      color: var(--text-muted); padding: 10px 14px;
+      background: var(--bg); white-space: nowrap;
+      cursor: pointer; user-select: none;
+    }
+    .leads-table th:hover { color: var(--primary); }
+    .leads-table th .sort-icon { margin-left: 4px; opacity: 0.5; }
+    .leads-table th.sorted .sort-icon { opacity: 1; color: var(--primary); }
+    .leads-table td { padding: 11px 14px; border-top: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+    .leads-table tr:hover td { background: #fdf9f5; }
+    .badge {
+      display: inline-flex; align-items: center;
+      padding: 2px 8px; border-radius: 99px;
+      font-size: 11px; font-weight: 700;
+    }
+    .badge.yes { background: #dcfce7; color: #15803d; }
+    .badge.no { background: #f3f4f6; color: #6b7280; }
+    .badge.partial { background: #fef3c7; color: #92400e; }
+
+    .pagination {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 14px; font-size: 13px; color: var(--text-muted);
+    }
+    .page-btns { display: flex; gap: 6px; }
+    .page-btn {
+      padding: 6px 12px; border: 1px solid var(--border);
+      border-radius: 6px; background: var(--white);
+      font-family: 'Inter', sans-serif; font-size: 13px;
+      cursor: pointer;
+    }
+    .page-btn:hover { border-color: var(--primary); color: var(--primary); }
+    .page-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+    .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .empty-state {
+      text-align: center; padding: 48px 24px;
+      color: var(--text-muted);
+    }
+    .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+    .loading { text-align: center; padding: 48px; color: var(--text-muted); }
+
+    @media (max-width: 768px) {
+      .chart-grid { grid-template-columns: 1fr; }
+      .content { padding: 16px; }
+      .filters-bar { padding: 10px 16px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="app-header">
+  <div>
+    <h1>🥐 TN Quiz Analytics</h1>
+    <div class="sub">Truffle Nation — Quiz Funnel Intelligence</div>
+  </div>
+  <div class="header-right">
+    <a href="http://localhost:4003/api/analytics/export" class="export-btn" target="_blank">⬇ Export CSV</a>
+  </div>
+</div>
+
+<!-- Date filters -->
+<div class="filters-bar">
+  <span class="filter-label">Date range:</span>
+  <input type="date" class="filter-input" id="filter-from" placeholder="From">
+  <input type="date" class="filter-input" id="filter-to" placeholder="To">
+  <button class="reset-btn" onclick="setQuickRange(7)">7d</button>
+  <button class="reset-btn" onclick="setQuickRange(30)">30d</button>
+  <button class="reset-btn" onclick="setQuickRange(90)">90d</button>
+  <button class="reset-btn" onclick="resetFilters()">All time</button>
+  <button class="apply-btn" onclick="loadAll()">Apply</button>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('overview')">Overview</button>
+  <button class="tab-btn" onclick="switchTab('funnel')">Funnel Drop-off</button>
+  <button class="tab-btn" onclick="switchTab('answers')">Question Analysis</button>
+  <button class="tab-btn" onclick="switchTab('leads')">Lead List</button>
+</div>
+
+<div class="content">
+
+  <!-- ── OVERVIEW ── -->
+  <div class="tab-panel active" id="panel-overview">
+    <div class="stat-grid" id="overview-stats">
+      <div class="loading">Loading...</div>
+    </div>
+    <div class="chart-grid">
+      <div class="chart-card full">
+        <div class="chart-title">Daily Sessions & Leads (last 30 days)</div>
+        <div class="chart-wrap tall"><canvas id="trend-chart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Conversion Funnel</div>
+        <div class="chart-wrap"><canvas id="funnel-mini-chart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Goal Distribution</div>
+        <div class="chart-wrap"><canvas id="goal-chart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── FUNNEL ── -->
+  <div class="tab-panel" id="panel-funnel">
+    <div class="chart-card" style="margin-bottom:20px">
+      <div class="chart-title">Quiz Step Drop-off (Q1 → Q16)</div>
+      <div class="chart-wrap tall"><canvas id="quiz-steps-chart"></canvas></div>
+    </div>
+
+    <div class="chart-card" style="margin-bottom:20px">
+      <div class="chart-title">Screen-by-Screen Funnel</div>
+      <table class="funnel-table" id="funnel-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Screen</th>
+            <th>Users Reached</th>
+            <th>Drop from Previous</th>
+            <th style="width:200px">Reach Rate</th>
+          </tr>
+        </thead>
+        <tbody id="funnel-tbody">
+          <tr><td colspan="5" class="loading">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class="section-title">Signal Screen Performance</h2>
+    <table class="signal-table" id="signal-table">
+      <thead>
+        <tr>
+          <th>Signal</th>
+          <th>Views</th>
+          <th>Continued Past</th>
+          <th>Completion Rate</th>
+        </tr>
+      </thead>
+      <tbody id="signal-tbody">
+        <tr><td colspan="4" class="loading">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── ANSWERS ── -->
+  <div class="tab-panel" id="panel-answers">
+    <div class="answer-grid" id="answers-grid">
+      <div class="loading">Loading...</div>
+    </div>
+  </div>
+
+  <!-- ── LEADS ── -->
+  <div class="tab-panel" id="panel-leads">
+    <div class="leads-toolbar">
+      <input class="leads-search" id="leads-search" placeholder="Search by name or phone..." oninput="debounceLeads()">
+      <select class="leads-filter-select" id="leads-goal" onchange="loadLeads()">
+        <option value="">All goals</option>
+        <option value="earn-extra">Earn extra income</option>
+        <option value="full-bakery">Start full bakery</option>
+        <option value="family-baking">Bake for family</option>
+        <option value="certification">Get certified</option>
+      </select>
+      <select class="leads-filter-select" id="leads-lead" onchange="loadLeads()">
+        <option value="">All contacts</option>
+        <option value="1">Captured leads only</option>
+        <option value="0">No contact</option>
+      </select>
+      <select class="leads-filter-select" id="leads-cta" onchange="loadLeads()">
+        <option value="">All actions</option>
+        <option value="1">CTA clicked</option>
+        <option value="0">No CTA click</option>
+      </select>
+      <select class="leads-filter-select" id="leads-selling" onchange="loadLeads()">
+        <option value="">All stages</option>
+        <option value="1">Reached selling</option>
+        <option value="0">Didn't reach selling</option>
+      </select>
+      <select class="leads-filter-select" id="leads-income" onchange="loadLeads()">
+        <option value="">All income goals</option>
+        <option value="0">₹10K–₹20K</option>
+        <option value="1">₹20K–₹50K</option>
+        <option value="2">₹50K–₹1L</option>
+        <option value="3">₹1L+</option>
+      </select>
+    </div>
+
+    <div id="leads-count" style="font-size:13px;color:var(--text-muted);margin-bottom:10px"></div>
+
+    <div class="leads-table-wrap">
+      <table class="leads-table">
+        <thead>
+          <tr>
+            <th onclick="setLeadSort('started_at')">Date <span class="sort-icon" id="sort-started_at">↕</span></th>
+            <th onclick="setLeadSort('name')">Name <span class="sort-icon" id="sort-name">↕</span></th>
+            <th>Phone</th>
+            <th>Goal</th>
+            <th>Income Goal</th>
+            <th>Investment</th>
+            <th>Biggest Challenge</th>
+            <th onclick="setLeadSort('quiz_furthest_step')">Quiz Progress <span class="sort-icon" id="sort-quiz_furthest_step">↕</span></th>
+            <th onclick="setLeadSort('lead_captured')">Lead <span class="sort-icon" id="sort-lead_captured">↕</span></th>
+            <th onclick="setLeadSort('cta_clicked')">CTA <span class="sort-icon" id="sort-cta_clicked">↕</span></th>
+          </tr>
+        </thead>
+        <tbody id="leads-tbody">
+          <tr><td colspan="10" class="loading">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination" id="leads-pagination"></div>
+  </div>
+
+</div>
+
+<script>
+  const API = 'http://localhost:4003/api';
+  let charts = {};
+  let leadsState = { sort: 'started_at', order: 'desc', page: 1 };
+  let leadsDebounce = null;
+
+  const INCOME_LABELS = ['₹10K–₹20K', '₹20K–₹50K', '₹50K–₹1L', '₹1L+'];
+  const INVESTMENT_LABELS = ['Free only', 'Under ₹10K', '₹25K–₹50K', '₹2–5L'];
+  const CHALLENGE_LABELS = ['Consistent results', 'Eggless recipes', 'Pricing & packaging', 'Marketing'];
+  const GOAL_LABELS = ['Earn extra income', 'Start full bakery', 'Bake for family', 'Get certified'];
+  const SIGNAL_NAMES = { level: 'Baking Level', income: 'Income Goal', challenge: 'Biggest Challenge', kitchen: 'Kitchen Setup' };
+
+  // ── UTILS ──
+  function qs() {
+    const from = document.getElementById('filter-from').value;
+    const to = document.getElementById('filter-to').value;
+    const p = new URLSearchParams();
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    return p.toString() ? '?' + p.toString() : '';
+  }
+
+  function setQuickRange(days) {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - days);
+    document.getElementById('filter-from').value = from.toISOString().split('T')[0];
+    document.getElementById('filter-to').value = to.toISOString().split('T')[0];
+    loadAll();
+  }
+
+  function resetFilters() {
+    document.getElementById('filter-from').value = '';
+    document.getElementById('filter-to').value = '';
+    loadAll();
+  }
+
+  function switchTab(name) {
+    document.querySelectorAll('.tab-btn').forEach((b, i) => {
+      const tabs = ['overview','funnel','answers','leads'];
+      b.classList.toggle('active', tabs[i] === name);
+    });
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.add('active');
+    if (name === 'leads') loadLeads();
+  }
+
+  function destroyChart(id) {
+    if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+  }
+
+  function pct(n, d) { return d ? ((n / d) * 100).toFixed(1) : '0.0'; }
+  function dropClass(p) { return p < 20 ? 'good' : p < 40 ? 'warn' : 'bad'; }
+
+  // ── OVERVIEW ──
+  async function loadOverview() {
+    const data = await fetch(`${API}/analytics/overview${qs()}`).then(r => r.json()).catch(() => null);
+    if (!data) return;
+
+    document.getElementById('overview-stats').innerHTML = `
+      <div class="stat-card highlight">
+        <div class="label">Total Sessions</div>
+        <div class="value">${data.total.toLocaleString()}</div>
+        <div class="sub-value">quiz funnel starts</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Leads Captured</div>
+        <div class="value">${data.leads.toLocaleString()}</div>
+        <div class="sub-value">${data.leadRate}% of sessions</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Reached Selling</div>
+        <div class="value">${data.selling.toLocaleString()}</div>
+        <div class="sub-value">${data.sellRate}% of sessions</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">CTA Clicks</div>
+        <div class="value">${data.ctaClicks.toLocaleString()}</div>
+        <div class="sub-value">${data.ctaRate}% of leads</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Avg Quiz Steps</div>
+        <div class="value">${data.avgQuizStep}</div>
+        <div class="sub-value">of 16 questions</div>
+      </div>
+    `;
+
+    // Trend chart
+    destroyChart('trend');
+    if (data.trend.length) {
+      const ctx = document.getElementById('trend-chart').getContext('2d');
+      charts.trend = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: data.trend.map(r => r.day),
+          datasets: [
+            { label: 'Sessions', data: data.trend.map(r => r.sessions), backgroundColor: 'rgba(109,46,70,0.2)', borderColor: '#6D2E46', borderWidth: 2, borderRadius: 4, yAxisID: 'y' },
+            { label: 'Leads', data: data.trend.map(r => r.leads), backgroundColor: 'rgba(45,138,78,0.8)', borderRadius: 4, yAxisID: 'y' }
+          ]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { y: { beginAtZero: true } } }
+      });
+    }
+
+    // Mini funnel chart
+    loadFunnelMini(data);
+  }
+
+  async function loadFunnelMini(overviewData) {
+    const data = await fetch(`${API}/analytics/funnel${qs()}`).then(r => r.json()).catch(() => null);
+    if (!data) return;
+
+    destroyChart('funnelMini');
+    const ctx = document.getElementById('funnel-mini-chart').getContext('2d');
+    const steps = data.funnelSteps.filter(s => s.count > 0);
+    charts.funnelMini = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: steps.map(s => s.name),
+        datasets: [{ data: steps.map(s => s.count), backgroundColor: 'rgba(109,46,70,0.75)', borderRadius: 4 }]
+      },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { beginAtZero: true } }
+      }
+    });
+
+    // Goal chart from answers
+    const ansData = await fetch(`${API}/analytics/answers${qs()}`).then(r => r.json()).catch(() => null);
+    if (!ansData) return;
+    const mainGoal = ansData.questions.find(q => q.questionId === 'main_goal');
+    if (mainGoal) {
+      destroyChart('goal');
+      const ctx2 = document.getElementById('goal-chart').getContext('2d');
+      charts.goal = new Chart(ctx2, {
+        type: 'doughnut',
+        data: {
+          labels: mainGoal.answers.map(a => a.text || GOAL_LABELS[a.index] || `Option ${a.index+1}`),
+          datasets: [{ data: mainGoal.answers.map(a => a.count), backgroundColor: ['#6D2E46','#A26769','#ECE2D0','#c4a882'] }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
+      });
+    }
+  }
+
+  // ── FUNNEL ──
+  async function loadFunnel() {
+    const data = await fetch(`${API}/analytics/funnel${qs()}`).then(r => r.json()).catch(() => null);
+    if (!data) return;
+
+    // Funnel table
+    const steps = data.funnelSteps;
+    const totalStart = steps[0]?.count || 1;
+    let tbody = '';
+    steps.forEach((step, i) => {
+      const prev = i > 0 ? (steps[i-1].count || 1) : null;
+      const dropPct = prev ? (((prev - step.count) / prev) * 100).toFixed(1) : '—';
+      const reachPct = ((step.count / totalStart) * 100).toFixed(1);
+      const dropClass = prev ? (parseFloat(dropPct) < 20 ? 'good' : parseFloat(dropPct) < 40 ? 'warn' : 'bad') : 'good';
+      tbody += `<tr>
+        <td style="color:var(--text-muted);font-size:12px">${i+1}</td>
+        <td><strong>${step.name}</strong></td>
+        <td style="font-weight:700">${step.count.toLocaleString()}</td>
+        <td>${prev !== null ? `<span class="drop-badge ${dropClass}">-${dropPct}%</span>` : '—'}</td>
+        <td class="funnel-bar-cell">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="funnel-bar-wrap" style="flex:1"><div class="funnel-bar-fill" style="width:${reachPct}%"></div></div>
+            <span style="font-size:12px;color:var(--text-muted);width:36px">${reachPct}%</span>
+          </div>
+        </td>
+      </tr>`;
+    });
+    document.getElementById('funnel-tbody').innerHTML = tbody || '<tr><td colspan="5">No data yet</td></tr>';
+
+    // Quiz step chart
+    destroyChart('quizSteps');
+    if (data.quizSteps.length) {
+      const ctx = document.getElementById('quiz-steps-chart').getContext('2d');
+      const maxN = Math.max(...data.quizSteps.map(s => s.n), 1);
+      charts.quizSteps = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: data.quizSteps.map(s => `Q${s.question_index + 1}`),
+          datasets: [{
+            label: 'Users reached this question',
+            data: data.quizSteps.map(s => s.n),
+            backgroundColor: data.quizSteps.map(s => {
+              // Highlight signal trigger points
+              const triggers = [2, 5, 9, 12];
+              return triggers.includes(s.question_index) ? 'rgba(109,46,70,0.9)' : 'rgba(109,46,70,0.45)';
+            }),
+            borderRadius: 4
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                afterBody: (ctx) => {
+                  const i = ctx[0].dataIndex;
+                  const triggers = { 2: '← Signal: Level', 5: '← Signal: Income', 9: '← Signal: Challenge', 12: '← Signal: Kitchen' };
+                  return triggers[i] ? [triggers[i]] : [];
+                }
+              }
+            }
+          },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // Signal table
+    const signalMap = {};
+    data.signalStats.forEach(s => { signalMap[s.signal_type] = s; });
+    const signalOrder = ['level', 'income', 'challenge', 'kitchen'];
+    let stbody = '';
+    signalOrder.forEach(type => {
+      const s = signalMap[type] || { views: 0, continues: 0 };
+      const rate = s.views ? ((s.continues / s.views) * 100).toFixed(1) : '—';
+      stbody += `<tr>
+        <td><strong>${SIGNAL_NAMES[type] || type}</strong></td>
+        <td>${s.views}</td>
+        <td>${s.continues}</td>
+        <td>${rate !== '—' ? `<span class="drop-badge ${parseFloat(rate) >= 70 ? 'good' : parseFloat(rate) >= 40 ? 'warn' : 'bad'}">${rate}%</span>` : '—'}</td>
+      </tr>`;
+    });
+    document.getElementById('signal-tbody').innerHTML = stbody;
+  }
+
+  // ── ANSWERS ──
+  async function loadAnswers() {
+    const data = await fetch(`${API}/analytics/answers${qs()}`).then(r => r.json()).catch(() => null);
+    if (!data || !data.questions.length) {
+      document.getElementById('answers-grid').innerHTML = '<div class="empty-state"><div class="icon">📊</div><p>No answer data yet.</p></div>';
+      return;
+    }
+
+    const Q_TITLES = {
+      main_goal: 'What is your main goal with baking?',
+      bake_types: 'What types of bakes do you most want to master?',
+      current_level: 'What best describes your baking situation right now?',
+      blockers: 'What\'s stopping you from starting right now?',
+      time_available: 'How much time can you dedicate to learning weekly?',
+      income_goal: 'What monthly income do you want from baking?',
+      investment_willingness: 'How much are you looking to invest?',
+      household: 'What\'s your household situation?',
+      prior_learning: 'Have you tried learning baking before?',
+      biggest_challenge: 'What\'s your biggest baking challenge right now?',
+      learning_style: 'How do you learn best?',
+      products_interest: 'Which products excite you most?',
+      kitchen: 'What\'s your current kitchen setup like?',
+      customer_base: 'Who would be your primary customers?',
+      important: 'What matters most in a baking course for you?',
+      start_when: 'When are you ready to start?'
+    };
+
+    let html = '';
+    data.questions.forEach(q => {
+      const total = q.answers.reduce((s, a) => s + a.count, 0);
+      const maxCount = Math.max(...q.answers.map(a => a.count), 1);
+      html += `<div class="answer-card">
+        <div class="q-text">Q${q.questionIndex + 1}. ${Q_TITLES[q.questionId] || q.questionId}</div>
+        ${q.answers.map(a => `
+          <div class="answer-row">
+            <div class="text" title="${a.text || ''}">${a.text || `Option ${a.index + 1}`}</div>
+            <div class="bar-wrap"><div class="bar-fill" style="width:${(a.count/maxCount*100).toFixed(0)}%"></div></div>
+            <div class="count">${a.count} (${pct(a.count, total)}%)</div>
+          </div>`).join('')}
+      </div>`;
+    });
+    document.getElementById('answers-grid').innerHTML = html;
+  }
+
+  // ── LEADS ──
+  function setLeadSort(col) {
+    if (leadsState.sort === col) {
+      leadsState.order = leadsState.order === 'asc' ? 'desc' : 'asc';
+    } else {
+      leadsState.sort = col;
+      leadsState.order = 'desc';
+    }
+    leadsState.page = 1;
+    loadLeads();
+  }
+
+  function debounceLeads() {
+    clearTimeout(leadsDebounce);
+    leadsDebounce = setTimeout(() => { leadsState.page = 1; loadLeads(); }, 400);
+  }
+
+  async function loadLeads() {
+    const search = document.getElementById('leads-search').value;
+    const goal = document.getElementById('leads-goal').value;
+    const lead = document.getElementById('leads-lead').value;
+    const cta = document.getElementById('leads-cta').value;
+    const selling = document.getElementById('leads-selling').value;
+    const income = document.getElementById('leads-income').value;
+
+    const p = new URLSearchParams();
+    const df = document.getElementById('filter-from').value;
+    const dt = document.getElementById('filter-to').value;
+    if (df) p.set('from', df);
+    if (dt) p.set('to', dt);
+    if (search) p.set('search', search);
+    if (goal) p.set('goal', goal);
+    if (lead !== '') p.set('lead_captured', lead);
+    if (cta !== '') p.set('cta_clicked', cta);
+    if (selling !== '') p.set('reached_selling', selling);
+    if (income !== '') p.set('income', income);
+    p.set('sort', leadsState.sort);
+    p.set('order', leadsState.order);
+    p.set('page', leadsState.page);
+    p.set('limit', 50);
+
+    const data = await fetch(`${API}/analytics/leads?${p.toString()}`).then(r => r.json()).catch(() => null);
+    if (!data) return;
+
+    // Update sort icons
+    ['started_at', 'name', 'quiz_furthest_step', 'lead_captured', 'cta_clicked'].forEach(col => {
+      const el = document.getElementById('sort-' + col);
+      if (el) {
+        const th = el.parentElement;
+        th.classList.toggle('sorted', leadsState.sort === col);
+        el.textContent = leadsState.sort === col ? (leadsState.order === 'asc' ? '↑' : '↓') : '↕';
+      }
+    });
+
+    document.getElementById('leads-count').textContent = `${data.total.toLocaleString()} leads found`;
+
+    if (!data.leads.length) {
+      document.getElementById('leads-tbody').innerHTML = `<tr><td colspan="10"><div class="empty-state"><div class="icon">🔍</div><p>No leads match your filters.</p></div></td></tr>`;
+    } else {
+      const rows = data.leads.map(lead => {
+        const ans = lead.answers || {};
+        const incomeIdx = ans.income_goal;
+        const investIdx = ans.investment_willingness;
+        const chalIdx = ans.biggest_challenge;
+        const mainGoalIdx = ans.main_goal;
+        const date = lead.started_at ? lead.started_at.split('T')[0] : '—';
+        return `<tr>
+          <td style="color:var(--text-muted)">${date}</td>
+          <td style="font-weight:600">${lead.name || '<span style="color:var(--text-muted)">—</span>'}</td>
+          <td>${lead.phone || '<span style="color:var(--text-muted)">—</span>'}</td>
+          <td style="font-size:12px">${GOAL_LABELS[mainGoalIdx] || lead.goal || '—'}</td>
+          <td style="font-size:12px">${INCOME_LABELS[incomeIdx] !== undefined ? INCOME_LABELS[incomeIdx] : '—'}</td>
+          <td style="font-size:12px">${INVESTMENT_LABELS[investIdx] !== undefined ? INVESTMENT_LABELS[investIdx] : '—'}</td>
+          <td style="font-size:12px">${CHALLENGE_LABELS[chalIdx] !== undefined ? CHALLENGE_LABELS[chalIdx] : '—'}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:6px">
+              <div style="background:var(--accent);border-radius:4px;height:6px;flex:1;max-width:80px">
+                <div style="background:var(--primary);height:100%;border-radius:4px;width:${Math.min(100, Math.round(lead.quiz_furthest_step / 16 * 100))}%"></div>
+              </div>
+              <span style="font-size:12px;color:var(--text-muted)">${lead.quiz_furthest_step}/16</span>
+            </div>
+          </td>
+          <td><span class="badge ${lead.lead_captured ? 'yes' : 'no'}">${lead.lead_captured ? '✓ Yes' : '—'}</span></td>
+          <td><span class="badge ${lead.cta_clicked ? 'yes' : 'no'}">${lead.cta_clicked ? '✓ Yes' : '—'}</span></td>
+        </tr>`;
+      });
+      document.getElementById('leads-tbody').innerHTML = rows.join('');
+    }
+
+    // Pagination
+    const totalPages = Math.ceil(data.total / 50);
+    let pagHTML = `<span>${data.total} total</span><div class="page-btns">`;
+    pagHTML += `<button class="page-btn" onclick="changePage(${leadsState.page - 1})" ${leadsState.page <= 1 ? 'disabled' : ''}>← Prev</button>`;
+    const start = Math.max(1, leadsState.page - 2);
+    const end = Math.min(totalPages, start + 4);
+    for (let i = start; i <= end; i++) {
+      pagHTML += `<button class="page-btn ${i === leadsState.page ? 'active' : ''}" onclick="changePage(${i})">${i}</button>`;
+    }
+    pagHTML += `<button class="page-btn" onclick="changePage(${leadsState.page + 1})" ${leadsState.page >= totalPages ? 'disabled' : ''}>Next →</button>`;
+    pagHTML += '</div>';
+    document.getElementById('leads-pagination').innerHTML = pagHTML;
+  }
+
+  function changePage(p) {
+    leadsState.page = p;
+    loadLeads();
+  }
+
+  // ── LOAD ALL ──
+  function loadAll() {
+    loadOverview();
+    // Pre-load funnel and answers in background
+    const active = document.querySelector('.tab-btn.active')?.getAttribute('onclick')?.match(/switchTab\('(\w+)'\)/)?.[1];
+    if (active === 'funnel') loadFunnel();
+    else if (active === 'answers') loadAnswers();
+    else if (active === 'leads') loadLeads();
+  }
+
+  // Wire tab buttons to also load data
+  const origSwitchTab = switchTab;
+
+  // Override tab switching to lazy-load
+  window.switchTab = function(name) {
+    document.querySelectorAll('.tab-btn').forEach(b => {
+      const match = b.getAttribute('onclick').match(/switchTab\('(\w+)'\)/);
+      if (match) b.classList.toggle('active', match[1] === name);
+    });
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.add('active');
+    if (name === 'funnel') loadFunnel();
+    else if (name === 'answers') loadAnswers();
+    else if (name === 'leads') loadLeads();
+  };
+
+  // Init
+  loadAll();
+</script>
+</body>
+</html>
