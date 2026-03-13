@@ -260,7 +260,7 @@
     <div class="sub">Truffle Nation — Quiz Funnel Intelligence</div>
   </div>
   <div class="header-right">
-    <a href="http://localhost:4003/api/analytics/export" class="export-btn" target="_blank">⬇ Export CSV</a>
+    <a href="/api/analytics/export" class="export-btn" target="_blank">⬇ Export CSV</a>
   </div>
 </div>
 
@@ -418,7 +418,7 @@
 </div>
 
 <script>
-  const API = 'http://localhost:4003/api';
+  const API = '/api';
   let charts = {};
   let leadsState = { sort: 'started_at', order: 'desc', page: 1 };
   let leadsDebounce = null;
