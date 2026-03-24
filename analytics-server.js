@@ -611,11 +611,29 @@ app.get('/api/portal/overview', async (req, res) => {
 
     const [enrollments] = await portalQuery(`SELECT COUNT(*) as total FROM course_enrollments`);
 
-    const [lessonCompletions] = await portalQuery(`SELECT COUNT(*) as total FROM student_progress WHERE completed = true`);
+    const [lessonCompletions] = await portalQuery(`SELECT COUNT(*) as total FROM student_progress WHERE completed_at IS NOT NULL`);
 
     const [quizAttempts] = await portalQuery(`SELECT COUNT(*) as total FROM quiz_attempts`);
 
-    const [avgProgress] = await portalQuery(`SELECT COALESCE(AVG(progress_percent), 0) as avg FROM course_enrollments`);
+    const [avgProgress] = await portalQuery(`
+      SELECT COALESCE(AVG(pct), 0) as avg FROM (
+        SELECT ce.user_id, ce.course_id,
+          CASE WHEN total.cnt = 0 THEN 0
+          ELSE (done.cnt::float / total.cnt * 100) END as pct
+        FROM course_enrollments ce
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) as cnt FROM content_items ci
+          JOIN course_sections cs ON cs.id = ci.section_id
+          WHERE cs.course_id = ce.course_id
+        ) total ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) as cnt FROM student_progress sp
+          JOIN content_items ci ON ci.id = sp.content_item_id
+          JOIN course_sections cs ON cs.id = ci.section_id
+          WHERE sp.user_id = ce.user_id AND cs.course_id = ce.course_id AND sp.completed_at IS NOT NULL
+        ) done ON true
+      ) sub
+    `);
 
     const [communityPosts] = await portalQuery(`SELECT COUNT(*) as total FROM posts`);
 
@@ -666,11 +684,11 @@ app.get('/api/portal/courses', async (req, res) => {
       SELECT
         c.id, c.title, c.category, c.difficulty, c.status,
         COUNT(DISTINCT ce.user_id) as enrollment_count,
-        COALESCE(AVG(ce.progress_percent), 0) as avg_progress,
-        COUNT(DISTINCT CASE WHEN ce.progress_percent = 100 THEN ce.user_id END) as completed_count,
         (SELECT COUNT(*) FROM course_sections cs
          JOIN content_items ci ON ci.section_id = cs.id
-         WHERE cs.course_id = c.id) as total_lessons
+         WHERE cs.course_id = c.id) as total_lessons,
+        0 as avg_progress,
+        0 as completed_count
       FROM courses c
       LEFT JOIN course_enrollments ce ON ce.course_id = c.id
       GROUP BY c.id, c.title, c.category, c.difficulty, c.status
@@ -691,8 +709,25 @@ app.get('/api/portal/funnel', async (req, res) => {
     const [onboarded] = await portalQuery(`SELECT COUNT(*) as c FROM users WHERE role = 'student' AND onboarding_completed = true`);
     const [enrolled] = await portalQuery(`SELECT COUNT(DISTINCT user_id) as c FROM course_enrollments`);
     const [startedLesson] = await portalQuery(`SELECT COUNT(DISTINCT user_id) as c FROM student_progress`);
-    const [completedLesson] = await portalQuery(`SELECT COUNT(DISTINCT user_id) as c FROM student_progress WHERE completed = true`);
-    const [completedCourse] = await portalQuery(`SELECT COUNT(DISTINCT user_id) as c FROM course_enrollments WHERE progress_percent = 100`);
+    const [completedLesson] = await portalQuery(`SELECT COUNT(DISTINCT user_id) as c FROM student_progress WHERE completed_at IS NOT NULL`);
+    const [completedCourse] = await portalQuery(`
+      SELECT COUNT(DISTINCT ce.user_id) as c
+      FROM course_enrollments ce
+      WHERE (
+        SELECT COUNT(*) FROM student_progress sp
+        JOIN content_items ci ON ci.id = sp.content_item_id
+        JOIN course_sections cs ON cs.id = ci.section_id
+        WHERE sp.user_id = ce.user_id AND cs.course_id = ce.course_id AND sp.completed_at IS NOT NULL
+      ) = (
+        SELECT COUNT(*) FROM content_items ci
+        JOIN course_sections cs ON cs.id = ci.section_id
+        WHERE cs.course_id = ce.course_id
+      ) AND (
+        SELECT COUNT(*) FROM content_items ci
+        JOIN course_sections cs ON cs.id = ci.section_id
+        WHERE cs.course_id = ce.course_id
+      ) > 0
+    `);
     const [earnedCert] = await portalQuery(`SELECT COUNT(DISTINCT user_id) as c FROM certificates`);
     const [postedInCommunity] = await portalQuery(`SELECT COUNT(DISTINCT author_id) as c FROM posts`);
 
@@ -736,12 +771,11 @@ app.get('/api/portal/students', async (req, res) => {
         u.experience_level, u.created_at, u.is_active,
         u.onboarding_completed,
         COUNT(DISTINCT ce.course_id) as enrolled_courses,
-        COALESCE(AVG(ce.progress_percent), 0) as avg_progress,
-        COUNT(DISTINCT sp.id) as lessons_completed,
+        COUNT(DISTINCT CASE WHEN sp.completed_at IS NOT NULL THEN sp.id END) as lessons_completed,
         (SELECT MAX(s.created_at) FROM sessions s WHERE s.user_id = u.id) as last_login
       FROM users u
       LEFT JOIN course_enrollments ce ON ce.user_id = u.id
-      LEFT JOIN student_progress sp ON sp.user_id = u.id AND sp.completed = true
+      LEFT JOIN student_progress sp ON sp.user_id = u.id
       ${where}
       GROUP BY u.id
       ORDER BY u.created_at DESC
@@ -793,22 +827,20 @@ app.get('/api/portal/export', async (req, res) => {
         u.experience_level, u.created_at, u.is_active,
         u.onboarding_completed,
         COUNT(DISTINCT ce.course_id) as enrolled_courses,
-        COALESCE(AVG(ce.progress_percent), 0) as avg_progress,
-        COUNT(DISTINCT sp.id) as lessons_completed
+        COUNT(DISTINCT CASE WHEN sp.completed_at IS NOT NULL THEN sp.id END) as lessons_completed
       FROM users u
       LEFT JOIN course_enrollments ce ON ce.user_id = u.id
-      LEFT JOIN student_progress sp ON sp.user_id = u.id AND sp.completed = true
+      LEFT JOIN student_progress sp ON sp.user_id = u.id
       WHERE u.role = 'student'
       GROUP BY u.id
       ORDER BY u.created_at DESC
     `);
 
-    const header = 'Username,Full Name,Email,City,Experience,Registered,Active,Onboarded,Courses Enrolled,Avg Progress,Lessons Completed';
+    const header = 'Username,Full Name,Email,City,Experience,Registered,Active,Onboarded,Courses Enrolled,Lessons Completed';
     const rows = students.map(s => [
       s.username, s.full_name || '', s.email || '', s.city || '',
       s.experience_level || '', (s.created_at||'').slice(0,10), s.is_active ? 'Yes' : 'No',
-      s.onboarding_completed ? 'Yes' : 'No', s.enrolled_courses,
-      parseFloat(s.avg_progress).toFixed(1) + '%', s.lessons_completed
+      s.onboarding_completed ? 'Yes' : 'No', s.enrolled_courses, s.lessons_completed
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
 
     res.setHeader('Content-Type', 'text/csv');
