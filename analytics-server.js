@@ -569,6 +569,257 @@ app.get('/api/lp/export', (req, res) => {
   res.send([headers.join(','), ...rows].join('\n'));
 });
 
+// ══════════════════════════════════════════════════════════
+// ── STUDENT PORTAL ANALYTICS (PostgreSQL) ──
+// ══════════════════════════════════════════════════════════
+
+const { Pool } = require('pg');
+const portalDb = new Pool({
+  host: '187.124.97.219',
+  port: 5433,
+  user: 'portal_user',
+  password: 'PhjVwNR7Vxny79NISkUpwFnX4XvPtruP',
+  database: 'student_portal',
+  max: 5,
+  idleTimeoutMillis: 30000,
+  ssl: false,
+});
+
+// Helper: run query with error handling
+async function portalQuery(sql, params = []) {
+  const client = await portalDb.connect();
+  try {
+    const result = await client.query(sql, params);
+    return result.rows;
+  } finally {
+    client.release();
+  }
+}
+
+// ── PORTAL: Overview stats ──
+app.get('/api/portal/overview', async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    let dateFilter = '';
+    const params = [];
+    if (from) { params.push(from); dateFilter += ` AND u.created_at >= $${params.length}::date`; }
+    if (to) { params.push(to); dateFilter += ` AND u.created_at <= ($${params.length}::date + interval '1 day')`; }
+
+    const [students] = await portalQuery(`SELECT COUNT(*) as total FROM users WHERE role = 'student' ${dateFilter.replace(/u\./g, '')}`, params);
+
+    const [activeStudents] = await portalQuery(`SELECT COUNT(DISTINCT user_id) as total FROM sessions WHERE created_at >= NOW() - interval '7 days'`);
+
+    const [enrollments] = await portalQuery(`SELECT COUNT(*) as total FROM course_enrollments`);
+
+    const [lessonCompletions] = await portalQuery(`SELECT COUNT(*) as total FROM student_progress WHERE completed = true`);
+
+    const [quizAttempts] = await portalQuery(`SELECT COUNT(*) as total FROM quiz_attempts`);
+
+    const [avgProgress] = await portalQuery(`SELECT COALESCE(AVG(progress_percent), 0) as avg FROM course_enrollments`);
+
+    const [communityPosts] = await portalQuery(`SELECT COUNT(*) as total FROM posts`);
+
+    const [certificates] = await portalQuery(`SELECT COUNT(*) as total FROM certificates`);
+
+    // Daily active users (last 30 days)
+    const dailyActive = await portalQuery(`
+      SELECT DATE(created_at) as day, COUNT(DISTINCT user_id) as count
+      FROM sessions
+      WHERE created_at >= NOW() - interval '30 days'
+      GROUP BY DATE(created_at)
+      ORDER BY day
+    `);
+
+    // Daily enrollments (last 30 days)
+    const dailyEnrollments = await portalQuery(`
+      SELECT DATE(enrolled_at) as day, COUNT(*) as count
+      FROM course_enrollments
+      WHERE enrolled_at >= NOW() - interval '30 days'
+      GROUP BY DATE(enrolled_at)
+      ORDER BY day
+    `);
+
+    res.json({
+      stats: {
+        totalStudents: parseInt(students.total),
+        activeStudents7d: parseInt(activeStudents.total),
+        totalEnrollments: parseInt(enrollments.total),
+        lessonCompletions: parseInt(lessonCompletions.total),
+        quizAttempts: parseInt(quizAttempts.total),
+        avgCourseProgress: parseFloat(avgProgress.avg).toFixed(1),
+        communityPosts: parseInt(communityPosts.total),
+        certificates: parseInt(certificates.total),
+      },
+      dailyActive,
+      dailyEnrollments,
+    });
+  } catch (err) {
+    console.error('Portal overview error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PORTAL: Course analytics ──
+app.get('/api/portal/courses', async (req, res) => {
+  try {
+    const courses = await portalQuery(`
+      SELECT
+        c.id, c.title, c.category, c.difficulty, c.status,
+        COUNT(DISTINCT ce.user_id) as enrollment_count,
+        COALESCE(AVG(ce.progress_percent), 0) as avg_progress,
+        COUNT(DISTINCT CASE WHEN ce.progress_percent = 100 THEN ce.user_id END) as completed_count,
+        (SELECT COUNT(*) FROM course_sections cs
+         JOIN content_items ci ON ci.section_id = cs.id
+         WHERE cs.course_id = c.id) as total_lessons
+      FROM courses c
+      LEFT JOIN course_enrollments ce ON ce.course_id = c.id
+      GROUP BY c.id, c.title, c.category, c.difficulty, c.status
+      ORDER BY enrollment_count DESC
+    `);
+
+    res.json({ courses });
+  } catch (err) {
+    console.error('Portal courses error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PORTAL: Engagement funnel ──
+app.get('/api/portal/funnel', async (req, res) => {
+  try {
+    const [totalStudents] = await portalQuery(`SELECT COUNT(*) as c FROM users WHERE role = 'student'`);
+    const [onboarded] = await portalQuery(`SELECT COUNT(*) as c FROM users WHERE role = 'student' AND onboarding_completed = true`);
+    const [enrolled] = await portalQuery(`SELECT COUNT(DISTINCT user_id) as c FROM course_enrollments`);
+    const [startedLesson] = await portalQuery(`SELECT COUNT(DISTINCT user_id) as c FROM student_progress`);
+    const [completedLesson] = await portalQuery(`SELECT COUNT(DISTINCT user_id) as c FROM student_progress WHERE completed = true`);
+    const [completedCourse] = await portalQuery(`SELECT COUNT(DISTINCT user_id) as c FROM course_enrollments WHERE progress_percent = 100`);
+    const [earnedCert] = await portalQuery(`SELECT COUNT(DISTINCT user_id) as c FROM certificates`);
+    const [postedInCommunity] = await portalQuery(`SELECT COUNT(DISTINCT author_id) as c FROM posts`);
+
+    res.json({
+      funnel: [
+        { stage: 'Registered', count: parseInt(totalStudents.c) },
+        { stage: 'Onboarded', count: parseInt(onboarded.c) },
+        { stage: 'Enrolled in Course', count: parseInt(enrolled.c) },
+        { stage: 'Started a Lesson', count: parseInt(startedLesson.c) },
+        { stage: 'Completed a Lesson', count: parseInt(completedLesson.c) },
+        { stage: 'Completed a Course', count: parseInt(completedCourse.c) },
+        { stage: 'Earned Certificate', count: parseInt(earnedCert.c) },
+        { stage: 'Posted in Community', count: parseInt(postedInCommunity.c) },
+      ]
+    });
+  } catch (err) {
+    console.error('Portal funnel error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PORTAL: Student list ──
+app.get('/api/portal/students', async (req, res) => {
+  try {
+    const { search, page = 1, limit = 50 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    let where = `WHERE u.role = 'student'`;
+    const params = [];
+    if (search) {
+      params.push(`%${search}%`);
+      where += ` AND (u.full_name ILIKE $${params.length} OR u.username ILIKE $${params.length} OR u.email ILIKE $${params.length})`;
+    }
+
+    const [countResult] = await portalQuery(`SELECT COUNT(*) as total FROM users u ${where}`, params);
+
+    params.push(parseInt(limit), offset);
+    const students = await portalQuery(`
+      SELECT
+        u.id, u.username, u.full_name, u.email, u.city,
+        u.experience_level, u.created_at, u.is_active,
+        u.onboarding_completed,
+        COUNT(DISTINCT ce.course_id) as enrolled_courses,
+        COALESCE(AVG(ce.progress_percent), 0) as avg_progress,
+        COUNT(DISTINCT sp.id) as lessons_completed,
+        (SELECT MAX(s.created_at) FROM sessions s WHERE s.user_id = u.id) as last_login
+      FROM users u
+      LEFT JOIN course_enrollments ce ON ce.user_id = u.id
+      LEFT JOIN student_progress sp ON sp.user_id = u.id AND sp.completed = true
+      ${where}
+      GROUP BY u.id
+      ORDER BY u.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `, params);
+
+    res.json({
+      students,
+      total: parseInt(countResult.total),
+      page: parseInt(page),
+      pages: Math.ceil(parseInt(countResult.total) / parseInt(limit)),
+    });
+  } catch (err) {
+    console.error('Portal students error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PORTAL: Activity timeline ──
+app.get('/api/portal/activity', async (req, res) => {
+  try {
+    const activity = await portalQuery(`
+      SELECT
+        DATE(created_at) as day,
+        COUNT(*) FILTER (WHERE action LIKE '%login%') as logins,
+        COUNT(*) FILTER (WHERE action LIKE '%enroll%') as enrollments,
+        COUNT(*) FILTER (WHERE action LIKE '%progress%' OR action LIKE '%complete%') as lesson_completions,
+        COUNT(*) FILTER (WHERE action LIKE '%quiz%') as quiz_attempts,
+        COUNT(*) FILTER (WHERE action LIKE '%post%' OR action LIKE '%comment%') as community_actions
+      FROM activity_log
+      WHERE created_at >= NOW() - interval '30 days'
+      GROUP BY DATE(created_at)
+      ORDER BY day
+    `);
+
+    res.json({ activity });
+  } catch (err) {
+    console.error('Portal activity error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PORTAL: Export students CSV ──
+app.get('/api/portal/export', async (req, res) => {
+  try {
+    const students = await portalQuery(`
+      SELECT
+        u.username, u.full_name, u.email, u.city,
+        u.experience_level, u.created_at, u.is_active,
+        u.onboarding_completed,
+        COUNT(DISTINCT ce.course_id) as enrolled_courses,
+        COALESCE(AVG(ce.progress_percent), 0) as avg_progress,
+        COUNT(DISTINCT sp.id) as lessons_completed
+      FROM users u
+      LEFT JOIN course_enrollments ce ON ce.user_id = u.id
+      LEFT JOIN student_progress sp ON sp.user_id = u.id AND sp.completed = true
+      WHERE u.role = 'student'
+      GROUP BY u.id
+      ORDER BY u.created_at DESC
+    `);
+
+    const header = 'Username,Full Name,Email,City,Experience,Registered,Active,Onboarded,Courses Enrolled,Avg Progress,Lessons Completed';
+    const rows = students.map(s => [
+      s.username, s.full_name || '', s.email || '', s.city || '',
+      s.experience_level || '', (s.created_at||'').slice(0,10), s.is_active ? 'Yes' : 'No',
+      s.onboarding_completed ? 'Yes' : 'No', s.enrolled_courses,
+      parseFloat(s.avg_progress).toFixed(1) + '%', s.lessons_completed
+    ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=students-export.csv');
+    res.send([header, ...rows].join('\n'));
+  } catch (err) {
+    console.error('Portal export error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`✅ TN Analytics running at http://localhost:${PORT}`);
   console.log(`📊 Quiz Funnel:  http://localhost:${PORT}/analytics-dashboard.html`);
