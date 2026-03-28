@@ -164,6 +164,8 @@
   <input type="date" class="filter-input" id="filter-from">
   <span class="filter-label">to</span>
   <input type="date" class="filter-input" id="filter-to">
+  <button class="reset-btn" onclick="setDay(0)">Today</button>
+  <button class="reset-btn" onclick="setDay(1)">Yesterday</button>
   <button class="apply-btn" onclick="applyDateFilter()">Apply</button>
   <button class="reset-btn" onclick="resetDateFilter()">Reset</button>
 </div>
@@ -266,6 +268,15 @@
     if (from) params += '&from=' + from;
     if (to) params += '&to=' + to;
     return params;
+  }
+
+  function setDay(offset) {
+    const d = new Date();
+    d.setDate(d.getDate() - offset);
+    const ds = d.toISOString().split('T')[0];
+    document.getElementById('filter-from').value = ds;
+    document.getElementById('filter-to').value = ds;
+    applyDateFilter();
   }
 
   function applyDateFilter() {

@@ -129,6 +129,8 @@
   <span class="filter-label">Date range:</span>
   <input type="date" class="filter-input" id="filter-from">
   <input type="date" class="filter-input" id="filter-to">
+  <button class="reset-btn" onclick="setDay(0)">Today</button>
+  <button class="reset-btn" onclick="setDay(1)">Yesterday</button>
   <button class="reset-btn" onclick="setQuickRange(7)">7d</button>
   <button class="reset-btn" onclick="setQuickRange(30)">30d</button>
   <button class="reset-btn" onclick="setQuickRange(90)">90d</button>
@@ -245,6 +247,15 @@
     return '?' + p.toString();
   }
 
+  function setDay(offset) {
+    const d = new Date();
+    d.setDate(d.getDate() - offset);
+    const ds = d.toISOString().split('T')[0];
+    document.getElementById('filter-from').value = ds;
+    document.getElementById('filter-to').value = ds;
+    loadAll();
+  }
+
   function setQuickRange(days) {
     const to = new Date(), from = new Date();
     from.setDate(from.getDate() - days);
@@ -285,6 +296,11 @@
         <div class="value">${data.total.toLocaleString()}</div>
         <div class="sub-value">form submissions</div>
       </div>
+      ${data.visitors ? `<div class="stat-card" style="background:linear-gradient(135deg,#fef3c7,#fde68a);border-color:#f59e0b">
+        <div class="label" style="color:#92400e">Conversion Rate</div>
+        <div class="value" style="color:#92400e">${data.conversion_rate}%</div>
+        <div class="sub-value" style="color:#a16207">${(data.visitors||0).toLocaleString()} visitors &rarr; ${data.total.toLocaleString()} leads</div>
+      </div>` : ''}
       <div class="stat-card good">
         <div class="label">Qualified</div>
         <div class="value">${data.qualified.toLocaleString()}</div>

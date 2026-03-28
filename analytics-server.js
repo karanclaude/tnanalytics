@@ -6,6 +6,12 @@ const path = require('path');
 const app = express();
 const PORT = 4003;
 
+// ── IST TIMESTAMP ──
+// All timestamps in IST (Asia/Kolkata, UTC+5:30) so daily grouping matches Indian business hours
+function istNow() {
+  return new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Kolkata' }).replace(' ', 'T') + '+05:30';
+}
+
 const SESSIONS_FILE = path.join(__dirname, 'data', 'sessions.json');
 const EVENTS_FILE   = path.join(__dirname, 'data', 'events.jsonl');
 
@@ -61,7 +67,7 @@ app.post('/api/track', (req, res) => {
 
     if (!sessionId || !eventType) return res.status(400).json({ error: 'Missing required fields' });
 
-    const ts = new Date().toISOString();
+    const ts = istNow();
 
     // Upsert session
     if (!sessions[sessionId]) {
@@ -374,7 +380,7 @@ app.post('/api/lp/track', (req, res) => {
   try {
     const { eventType, source, sessionId, name, phone, email, score, qualified, answers, utms, fbclid, fbc, fbp, stepIndex } = req.body;
     if (!eventType || !source) return res.status(400).json({ error: 'Missing required fields' });
-    const ts = new Date().toISOString();
+    const ts = istNow();
     const sid = sessionId || (source + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8));
 
     if (eventType === 'lead_submit') {
@@ -393,6 +399,22 @@ app.post('/api/lp/track', (req, res) => {
         referrer: req.headers['referer'] || '', user_agent: req.headers['user-agent'] || ''
       };
       saveLPSessions();
+      appendLPEvent({ sessionId: sid, source, eventType, ts });
+    } else if (eventType === 'page_view') {
+      // Track unique visitor sessions (for conversion rate calculation)
+      if (!lpSessions[sid]) {
+        lpSessions[sid] = {
+          id: sid, source, started_at: ts, name: null, phone: null, email: null,
+          score: null, qualified: null, answers: {},
+          utm_source: utms?.utm_source || '', utm_medium: utms?.utm_medium || '',
+          utm_campaign: utms?.utm_campaign || '', utm_content: utms?.utm_content || '',
+          utm_term: utms?.utm_term || '',
+          fbclid: fbclid || '', fbc: fbc || '', fbp: fbp || '',
+          furthest_step: 0, page_viewed: true,
+          referrer: req.headers['referer'] || '', user_agent: req.headers['user-agent'] || ''
+        };
+        saveLPSessions();
+      }
       appendLPEvent({ sessionId: sid, source, eventType, ts });
     } else if (eventType === 'step_view') {
       if (!lpSessions[sid]) {
@@ -456,10 +478,15 @@ app.get('/api/lp/overview', (req, res) => {
   submitted.forEach(s => { const src = s.utm_source || 'direct'; utmMap[src] = (utmMap[src] || 0) + 1; });
   const utm_breakdown = Object.entries(utmMap).map(([src, count]) => ({ source: src, count })).sort((a, b) => b.count - a.count).slice(0, 10);
 
+  // Visitor count = all sessions for this source (including page_view-only sessions)
+  const visitors = all.length;
+  const conversion_rate = visitors ? ((total / visitors) * 100).toFixed(1) : '0';
+
   res.json({
     total, qualified: qual, not_qualified: not_qual, disqualified: disqual,
     qual_rate: total ? ((qual / total) * 100).toFixed(1) : '0',
     avg_score: avgScore, max_score: maxScore,
+    visitors, conversion_rate,
     score_buckets: scoreBuckets, trend, utm_breakdown
   });
 });
@@ -481,9 +508,12 @@ app.get('/api/lp/funnel', (req, res) => {
 
   const submitted = allSess.filter(s => s.qualified !== null && s.qualified !== undefined).length;
   const STEP_NAMES = {
-    delhi:     ['Q1: Course Interest', 'Q2: Investment', 'Q3: Commitment', 'Q4: Timeline', 'Q5: Financial', 'Contact Info'],
-    hyderabad: ['Q1: Course Interest', 'Q2: Investment', 'Q3: Commitment', 'Q4: Timeline', 'Q5: Financial', 'Contact Info'],
-    online:    ['Q1: Experience', 'Q2: Goal', 'Q3: Investment', 'Q4: Timeline', 'Contact Info']
+    delhi:            ['Q1: Course Interest', 'Q2: Investment', 'Q3: Commitment', 'Q4: Timeline', 'Q5: Financial', 'Contact Info'],
+    hyderabad:        ['Q1: Course Interest', 'Q2: Investment', 'Q3: Commitment', 'Q4: Timeline', 'Q5: Financial', 'Contact Info'],
+    online:           ['Q1: Experience', 'Q2: Goal', 'Q3: Investment', 'Q4: Timeline', 'Contact Info'],
+    webinar_register: ['Page View', 'Form Fill'],
+    webinar_watch:    ['Q1: Experience', 'Q2: Goal', 'Q3: Investment', 'Q4: Timeline', 'Contact Info'],
+    webinar_video:    ['Q1: Experience', 'Q2: Goal', 'Q3: Investment', 'Q4: Timeline', 'Contact Info']
   };
   const names = STEP_NAMES[source] || ['Step 1','Step 2','Step 3','Step 4','Step 5','Step 6'];
   const funnelSteps = names.map((name, i) => ({ name, step: i + 1, count: stepCounts[i + 1] || 0 }));

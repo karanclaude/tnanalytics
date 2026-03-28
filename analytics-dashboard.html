@@ -269,6 +269,8 @@
   <span class="filter-label">Date range:</span>
   <input type="date" class="filter-input" id="filter-from" placeholder="From">
   <input type="date" class="filter-input" id="filter-to" placeholder="To">
+  <button class="reset-btn" onclick="setDay(0)">Today</button>
+  <button class="reset-btn" onclick="setDay(1)">Yesterday</button>
   <button class="reset-btn" onclick="setQuickRange(7)">7d</button>
   <button class="reset-btn" onclick="setQuickRange(30)">30d</button>
   <button class="reset-btn" onclick="setQuickRange(90)">90d</button>
@@ -437,6 +439,15 @@
     if (from) p.set('from', from);
     if (to) p.set('to', to);
     return p.toString() ? '?' + p.toString() : '';
+  }
+
+  function setDay(offset) {
+    const d = new Date();
+    d.setDate(d.getDate() - offset);
+    const ds = d.toISOString().split('T')[0];
+    document.getElementById('filter-from').value = ds;
+    document.getElementById('filter-to').value = ds;
+    loadAll();
   }
 
   function setQuickRange(days) {
